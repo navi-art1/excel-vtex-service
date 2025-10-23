@@ -13,16 +13,20 @@ Servicio backend Node.js que automatiza la lectura de archivos Excel y el envío
 - **Monitoreo**: Estadísticas detalladas de rendimiento y ejecución
 
 - **Subida automática a VTEX**: Cada vez que se genera y valida correctamente el archivo JSON, este se sube automáticamente al portal de archivos de VTEX, sin intervención manual.
+- **Copia de JSON en GCP**: Además, una copia del JSON generado se sube automáticamente a la carpeta `Publicaciones_json_vtex` en el bucket de GCP, para que el usuario tenga un historial de logs accesible.
 
-### 🆕 ¿Cuándo se sube el JSON a VTEX?
 
-El archivo JSON generado a partir del Excel se sube automáticamente a VTEX en los siguientes casos:
+### 🆕 ¿Cuándo se sube el JSON a VTEX y a GCP?
+
+
+El archivo JSON generado a partir del Excel se sube automáticamente a VTEX y una copia se almacena en GCP en los siguientes casos:
 
 1. **Al iniciar el servidor** (si la variable de entorno `RUN_ON_STARTUP` está en `true`).
 2. **Cada vez que se ejecuta el cron job** (por defecto, cada 10 minutos).
 3. **Cuando se fuerza manualmente el procesamiento** (por endpoint o script).
 
-La subida solo ocurre si el JSON fue creado y guardado exitosamente.
+
+La subida solo ocurre si el JSON fue creado y guardado exitosamente. En GCP, cada copia se almacena con un nombre único por fecha y hora en la carpeta `Publicaciones_json_vtex` del bucket.
 
 ## 📋 Requisitos
 

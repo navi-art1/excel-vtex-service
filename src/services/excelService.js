@@ -70,14 +70,21 @@ class ExcelService {
    */
   async readExcelAndConvert() {
     try {
-      logOperations.excel.info('Iniciando lectura de archivo Excel');
+
+  logOperations.excel.info('Buscando y descargando el archivo Excel más reciente de GCP (carpeta Archivos_sheets/) antes de procesar...');
+  const { downloadLatestExcelFromGCPFolder } = require('./gcpDownloadService');
+  const bucketName = 'bucket-sheetbridge-prd-data';
+  const folder = 'Archivos_sheets/';
+  const destPath = path.resolve(config.files.excelPath);
+  const latestFile = await downloadLatestExcelFromGCPFolder(bucketName, folder, destPath);
+  logOperations.excel.info(`Archivo Excel más reciente (${latestFile}) descargado de GCP. Iniciando lectura...`);
 
       // Validar archivo
       const fileInfo = await this.validateExcelFile();
-      
+
       // Leer el archivo Excel
       const workbook = XLSX.readFile(fileInfo.path);
-      
+
       // Verificar que el archivo tenga hojas
       if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
         throw createError.excel('El archivo Excel no contiene hojas válidas');
@@ -86,7 +93,7 @@ class ExcelService {
       logOperations.excel.info(`Archivo contiene ${workbook.SheetNames.length} hoja(s): ${workbook.SheetNames.join(', ')}`);
 
       // Procesar solo las hojas permitidas
-      const allowedSheets = ["PROD", "Skus", "Cintillos"];
+      const allowedSheets = ["RD", "skus", "Cintillos"];
       const allSheetsData = {};
       let totalRecords = 0;
 
@@ -334,6 +341,20 @@ class ExcelService {
         }
       } catch (uploadErr) {
         logOperations.excel.error('Error inesperado al intentar subir el archivo JSON a VTEX', uploadErr);
+      }
+
+      // Subir el JSON a GCP como log para el usuario
+      try {
+        const { uploadJsonToGCP } = require('./gcpDownloadService');
+        const bucketName = 'bucket-sheetbridge-prd-data';
+        const destFolder = 'Publicaciones_json_vtex';
+        // Usar nombre con fecha/hora para evitar sobrescribir
+        const now = new Date();
+        const destFileName = `output_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.json`;
+        await uploadJsonToGCP(bucketName, destFolder, outputPath, destFileName);
+        logOperations.excel.info(`Archivo JSON subido a GCP en Publicaciones_json_vtex/${destFileName}`);
+      } catch (gcpErr) {
+        logOperations.excel.error('Error al subir el archivo JSON a GCP (Publicaciones_json_vtex)', gcpErr);
       }
 
     } catch (error) {

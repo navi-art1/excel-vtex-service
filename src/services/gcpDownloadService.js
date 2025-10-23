@@ -1,0 +1,62 @@
+const { Storage } = require('@google-cloud/storage');
+const path = require('path');
+
+// Ruta al archivo de credenciales (ajusta si lo pones en otro lado)
+const keyFilename = path.resolve(__dirname, '../../gcp-service-account.json');
+const storage = new Storage({ keyFilename, projectId: 'prd-promart-ec-maps-chk-api' });
+
+/**
+ * Descarga un archivo Excel desde un bucket de GCP
+ * @param {string} bucketName - Nombre del bucket
+ * @param {string} srcFilename - Ruta del archivo en el bucket
+ * @param {string} destPath - Ruta local de destino
+ */
+async function downloadExcelFromGCP(bucketName, srcFilename, destPath) {
+  await storage.bucket(bucketName).file(srcFilename).download({ destination: destPath });
+  console.log(`Archivo descargado de GCP a ${destPath}`);
+}
+
+/**
+ * Obtiene el archivo más reciente de una carpeta en un bucket y lo descarga
+ * @param {string} bucketName - Nombre del bucket
+ * @param {string} folder - Carpeta dentro del bucket (ej: 'Archivos_sheets/')
+ * @param {string} destPath - Ruta local de destino
+ * @returns {Promise<string>} - Nombre del archivo descargado
+ */
+async function downloadLatestExcelFromGCPFolder(bucketName, folder, destPath) {
+  const [files] = await storage.bucket(bucketName).getFiles({ prefix: folder });
+  if (!files || files.length === 0) {
+    throw new Error(`No se encontraron archivos en la carpeta ${folder}`);
+  }
+  // Filtrar solo archivos .xlsx o .xls
+  const excelFiles = files.filter(f => f.name.endsWith('.xlsx') || f.name.endsWith('.xls'));
+  if (excelFiles.length === 0) {
+    throw new Error(`No se encontraron archivos Excel en la carpeta ${folder}`);
+  }
+  // Ordenar por fecha de actualización (metadata.updated)
+  const filesWithMeta = await Promise.all(
+    excelFiles.map(async f => {
+      const [meta] = await f.getMetadata();
+      return { name: f.name, updated: new Date(meta.updated) };
+    })
+  );
+  filesWithMeta.sort((a, b) => b.updated - a.updated);
+  const latest = filesWithMeta[0];
+  await downloadExcelFromGCP(bucketName, latest.name, destPath);
+  return latest.name;
+}
+
+/**
+ * Sube un archivo local a una carpeta en un bucket de GCP
+ * @param {string} bucketName - Nombre del bucket
+ * @param {string} destFolder - Carpeta destino en el bucket (ej: 'Publicaciones_json_vtex/')
+ * @param {string} localFilePath - Ruta local del archivo a subir
+ * @param {string} destFileName - Nombre del archivo en el bucket
+ */
+async function uploadJsonToGCP(bucketName, destFolder, localFilePath, destFileName) {
+  const destination = path.posix.join(destFolder, destFileName);
+  await storage.bucket(bucketName).upload(localFilePath, { destination });
+  console.log(`Archivo JSON subido a GCP: ${destination}`);
+}
+
+module.exports = { downloadExcelFromGCP, downloadLatestExcelFromGCPFolder, uploadJsonToGCP };
