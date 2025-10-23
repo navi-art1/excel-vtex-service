@@ -320,8 +320,21 @@ class ExcelService {
 
       // Guardar como JSON
       await fs.writeFile(outputPath, JSON.stringify(outputData, null, 2), 'utf8');
-      
       logOperations.excel.info(`Datos guardados en: ${outputPath}`);
+
+      // Subir a VTEX después de guardar exitosamente
+      try {
+        const { uploadFileToVtexPortal } = require('./uploadOutputToPortalModule');
+        const fileName = 'googlesheet.json';
+        const uploadResult = await uploadFileToVtexPortal(outputPath, fileName);
+        if (uploadResult) {
+          logOperations.excel.info('Archivo JSON subido exitosamente a VTEX');
+        } else {
+          logOperations.excel.error('Error al subir el archivo JSON a VTEX');
+        }
+      } catch (uploadErr) {
+        logOperations.excel.error('Error inesperado al intentar subir el archivo JSON a VTEX', uploadErr);
+      }
 
     } catch (error) {
       logOperations.excel.error('Error guardando datos procesados', error);

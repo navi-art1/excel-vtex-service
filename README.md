@@ -12,6 +12,18 @@ Servicio backend Node.js que automatiza la lectura de archivos Excel y el envío
 - **Manejo de errores**: Sistema robusto de manejo y recuperación de errores
 - **Monitoreo**: Estadísticas detalladas de rendimiento y ejecución
 
+- **Subida automática a VTEX**: Cada vez que se genera y valida correctamente el archivo JSON, este se sube automáticamente al portal de archivos de VTEX, sin intervención manual.
+
+### 🆕 ¿Cuándo se sube el JSON a VTEX?
+
+El archivo JSON generado a partir del Excel se sube automáticamente a VTEX en los siguientes casos:
+
+1. **Al iniciar el servidor** (si la variable de entorno `RUN_ON_STARTUP` está en `true`).
+2. **Cada vez que se ejecuta el cron job** (por defecto, cada 10 minutos).
+3. **Cuando se fuerza manualmente el procesamiento** (por endpoint o script).
+
+La subida solo ocurre si el JSON fue creado y guardado exitosamente.
+
 ## 📋 Requisitos
 
 - Node.js >= 16.0.0
@@ -58,6 +70,15 @@ Servicio backend Node.js que automatiza la lectura de archivos Excel y el envío
    ```
    
    Colocar tu archivo Excel en `data/input/`
+
+5. **(Opcional) Configurar subida automática a VTEX**
+   - Asegúrate de tener las variables de entorno VTEX correctamente configuradas en `.env`:
+     ```env
+     VTEX_ACCOUNT=tu-account-name
+     VTEX_APP_KEY=tu_app_key
+     VTEX_APP_TOKEN=tu_app_token
+     ```
+   - El archivo `data/output.json` se subirá automáticamente a VTEX después de cada procesamiento exitoso.
 
 5. **Iniciar el servicio**
    ```bash
@@ -208,6 +229,7 @@ El servicio maneja automáticamente:
 npm start          # Ejecutar en producción
 npm run dev        # Desarrollo con nodemon
 npm test           # Ejecutar tests (placeholder)
+node src/services/uploadOutputToPortal.js   # Subida manual del JSON a VTEX (ya no es necesario en la mayoría de casos)
 ```
 
 ### Estructura del Proyecto
@@ -238,6 +260,11 @@ logs/               # Archivos de log
 2. **"Error de autenticación VTEX"**
    - Verificar `VTEX_APP_KEY` y `VTEX_APP_TOKEN`
    - Confirmar que las credenciales están activas
+
+3. **"No se sube el archivo JSON a VTEX"**
+   - Verifica que las variables de entorno de VTEX estén correctas
+   - Revisa los logs para ver si hubo errores al subir el archivo
+   - El archivo solo se sube si el procesamiento del Excel fue exitoso
 
 3. **"Servicio no inicia"**
    - Verificar que el puerto no esté en uso
