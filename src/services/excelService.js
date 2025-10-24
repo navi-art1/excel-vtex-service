@@ -77,6 +77,7 @@ class ExcelService {
   const folder = 'Archivos_sheets/';
   const destPath = path.resolve(config.files.excelPath);
   const latestFile = await downloadLatestExcelFromGCPFolder(bucketName, folder, destPath);
+  this._latestGcpExcelFile = latestFile;
   logOperations.excel.info(`Archivo Excel más reciente (${latestFile}) descargado de GCP. Iniciando lectura...`);
 
       // Validar archivo
@@ -93,7 +94,7 @@ class ExcelService {
       logOperations.excel.info(`Archivo contiene ${workbook.SheetNames.length} hoja(s): ${workbook.SheetNames.join(', ')}`);
 
       // Procesar solo las hojas permitidas
-      const allowedSheets = ["RD", "skus", "Cintillos"];
+      const allowedSheets = ["RD", "skus", "PROD", "Skus","Cintillos"];
       const allSheetsData = {};
       let totalRecords = 0;
 
@@ -345,16 +346,24 @@ class ExcelService {
 
       // Subir el JSON a GCP como log para el usuario
       try {
-        const { uploadJsonToGCP } = require('./gcpDownloadService');
+        const { uploadJsonToGCP, moveFileInGCP } = require('./gcpDownloadService');
         const bucketName = 'bucket-sheetbridge-prd-data';
         const destFolder = 'Publicaciones_json_vtex';
         // Usar nombre con fecha/hora para evitar sobrescribir
         const now = new Date();
-        const destFileName = `output_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.json`;
+        const destFileName = `googleSheet_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.json`;
         await uploadJsonToGCP(bucketName, destFolder, outputPath, destFileName);
         logOperations.excel.info(`Archivo JSON subido a GCP en Publicaciones_json_vtex/${destFileName}`);
+
+        // Mover el Excel procesado a la carpeta Publicaciones_json_vtex (evita reprocesos)
+        if (this._latestGcpExcelFile) {
+          const srcPath = this._latestGcpExcelFile;
+          const destPath = `Publicaciones_json_vtex/${path.basename(srcPath)}`;
+          await moveFileInGCP(bucketName, srcPath, destPath);
+          logOperations.excel.info(`Archivo Excel procesado movido en GCP de ${srcPath} a ${destPath}`);
+        }
       } catch (gcpErr) {
-        logOperations.excel.error('Error al subir el archivo JSON a GCP (Publicaciones_json_vtex)', gcpErr);
+        logOperations.excel.error('Error al subir el archivo JSON o mover el Excel en GCP (Publicaciones_json_vtex)', gcpErr);
       }
 
     } catch (error) {
@@ -362,31 +371,6 @@ class ExcelService {
       throw createError.excel('Error al guardar el archivo JSON', { error: error.message });
     }
   }
-
-  /**
-   * Obtiene estadísticas del último procesamiento
-   */
-  getLastProcessingStats() {
-    return {
-      lastProcessedTime: this.lastProcessedTime,
-      recordCount: this.lastProcessedData ? this.lastProcessedData.length : 0,
-      hasData: !!this.lastProcessedData
-    };
-  }
-
-  /**
-   * Obtiene una muestra de los últimos datos procesados
-   */
-  getSampleData(limit = 5) {
-    if (!this.lastProcessedData) {
-      return null;
-    }
-
-    return this.lastProcessedData.slice(0, limit);
-  }
 }
 
-// Crear instancia singleton
-const excelService = new ExcelService();
-
-module.exports = excelService;
+module.exports = new ExcelService();

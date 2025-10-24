@@ -313,3 +313,19 @@ Para soporte técnico o reportar issues:
 ---
 
 **Desarrollado por el equipo de Promart** 🚀
+
+## 🆕 Mejoras y Cambios Recientes
+
+- **Integración total con Google Cloud Storage (GCP):**
+  - El sistema descarga automáticamente el archivo Excel más reciente desde la carpeta `Archivos_sheets` en el bucket GCP.
+  - Una vez procesado, el archivo Excel se mueve de `Archivos_sheets` a `Publicaciones_json_vtex`, evitando reprocesos y duplicados.
+  - El JSON generado se sube a VTEX y también se almacena en GCP con el nombre `googleSheet_YYYYMMDD_HHMMSS.json` para trazabilidad y auditoría.
+- **Automatización robusta:**
+  - El cron job revisa cada 10 minutos la carpeta de entrada en GCP. Si no hay archivos, no se genera ningún output adicional.
+  - El sistema garantiza que solo se procesen archivos nuevos y que los ya procesados no vuelvan a ser considerados.
+- **Scripts de mantenimiento:**
+  - Se agregaron scripts para mover archivos, subir archivos de prueba y limpiar la carpeta de logs en GCP.
+- **Mejoras de seguridad:**
+  - Los archivos de credenciales y secretos están excluidos del repositorio y del historial de git.
+- **Nombres de archivos en GCP:**
+  - Todos los archivos JSON subidos a GCP ahora comienzan con `googleSheet_` para facilitar la identificación y gestión.

@@ -59,4 +59,36 @@ async function uploadJsonToGCP(bucketName, destFolder, localFilePath, destFileNa
   console.log(`Archivo JSON subido a GCP: ${destination}`);
 }
 
-module.exports = { downloadExcelFromGCP, downloadLatestExcelFromGCPFolder, uploadJsonToGCP };
+/**
+ * Sube un archivo local a una carpeta en un bucket de GCP
+ * @param {string} bucketName - Nombre del bucket
+ * @param {string} destFolder - Carpeta destino en el bucket (ej: 'Archivos_sheets/')
+ * @param {string} localFilePath - Ruta local del archivo a subir
+ * @param {string} destFileName - Nombre del archivo en el bucket
+ */
+async function uploadFileToGCP(bucketName, destFolder, localFilePath, destFileName) {
+  const destination = path.posix.join(destFolder, destFileName);
+  await storage.bucket(bucketName).upload(localFilePath, { destination });
+  console.log(`Archivo subido a GCP: ${destination}`);
+}
+
+/**
+ * Mueve un archivo dentro del bucket de GCP (copia y borra el original)
+ * @param {string} bucketName - Nombre del bucket
+ * @param {string} srcPath - Ruta origen (ej: 'Archivos_sheets/archivo.xlsx')
+ * @param {string} destPath - Ruta destino (ej: 'Publicaciones_json_vtex/archivo.xlsx')
+ */
+async function moveFileInGCP(bucketName, srcPath, destPath) {
+  const bucket = storage.bucket(bucketName);
+  await bucket.file(srcPath).copy(bucket.file(destPath));
+  await bucket.file(srcPath).delete();
+  console.log(`Archivo movido en GCP de ${srcPath} a ${destPath}`);
+}
+
+module.exports = {
+  downloadExcelFromGCP,
+  downloadLatestExcelFromGCPFolder,
+  uploadJsonToGCP,
+  uploadFileToGCP,
+  moveFileInGCP
+};
