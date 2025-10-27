@@ -183,7 +183,8 @@ class ExcelService {
             return null;
           }
         })
-        .filter(row => row !== null); // Eliminar filas que no pudieron procesarse
+        .filter(row => row !== null)
+        .filter(row => row.visible === true); // Solo incluir filas con visible === true
 
       logOperations.excel.info(`Hoja ${sheetName} - Datos procesados: ${processedData.length} registros válidos de ${dataRows.length} filas`);
 
