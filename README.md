@@ -16,8 +16,8 @@ Servicio backend Node.js que automatiza la lectura de archivos Excel y el envío
 - **Copia de JSON en GCP**: Además, una copia del JSON generado se sube automáticamente a la carpeta `Publicaciones_json_vtex` en el bucket de GCP, para que el usuario tenga un historial de logs accesible.
 
 
-### 🆕 ¿Cuándo se sube el JSON a VTEX y a GCP?
 
+### 🆕 Flujo de procesamiento y limpieza en GCP
 
 El archivo JSON generado a partir del Excel se sube automáticamente a VTEX y una copia se almacena en GCP en los siguientes casos:
 
@@ -25,6 +25,10 @@ El archivo JSON generado a partir del Excel se sube automáticamente a VTEX y un
 2. **Cada vez que se ejecuta el cron job** (por defecto, cada 10 minutos).
 3. **Cuando se fuerza manualmente el procesamiento** (por endpoint o script).
 
+**Nuevo flujo de limpieza:**
+- El sistema descarga y procesa el archivo Excel más reciente de la carpeta `Archivos_sheets/` en el bucket de GCP.
+- Una vez procesado, el archivo Excel se mueve automáticamente a la carpeta `Publicaciones_json_vtex` en el bucket.
+- Después de mover el archivo, la carpeta `Archivos_sheets/` se limpia automáticamente, eliminando todos los archivos Excel restantes. Así, siempre tendrás la versión más actual y la carpeta limpia para el siguiente proceso.
 
 La subida solo ocurre si el JSON fue creado y guardado exitosamente. En GCP, cada copia se almacena con un nombre único por fecha y hora en la carpeta `Publicaciones_json_vtex` del bucket.
 

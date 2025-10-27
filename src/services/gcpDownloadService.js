@@ -43,6 +43,20 @@ async function downloadLatestExcelFromGCPFolder(bucketName, folder, destPath) {
   filesWithMeta.sort((a, b) => b.updated - a.updated);
   const latest = filesWithMeta[0];
   await downloadExcelFromGCP(bucketName, latest.name, destPath);
+
+  // Eliminar archivos Excel antiguos en la carpeta del bucket, excepto el más reciente
+  const bucket = storage.bucket(bucketName);
+  await Promise.all(
+    filesWithMeta.slice(1).map(async fileMeta => {
+      try {
+        await bucket.file(fileMeta.name).delete();
+        console.log(`Archivo antiguo eliminado del bucket: ${fileMeta.name}`);
+      } catch (e) {
+        console.error(`No se pudo eliminar el archivo ${fileMeta.name}:`, e.message);
+      }
+    })
+  );
+
   return latest.name;
 }
 

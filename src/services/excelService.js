@@ -184,7 +184,7 @@ class ExcelService {
           }
         })
         .filter(row => row !== null)
-        .filter(row => row.visible === true); // Solo incluir filas con visible === true
+        //.filter(row => row.visible === true); // Solo incluir filas con visible === true
 
       logOperations.excel.info(`Hoja ${sheetName} - Datos procesados: ${processedData.length} registros válidos de ${dataRows.length} filas`);
 
@@ -243,6 +243,22 @@ class ExcelService {
       return null;
     }
 
+    // Si el header es 'inicio' o 'fin', devolver el valor como string tal cual
+    if (header && (header.toLowerCase().includes('inicio') || header.toLowerCase().includes('fin'))) {
+      // Si viene como número (fecha Excel), convertir a string dd/mm/yyyy HH:MM:SS
+      if (typeof value === 'number') {
+        // Excel almacena fechas como días desde 1899-12-30
+        const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+        const ms = value * 24 * 60 * 60 * 1000;
+        const dateObj = new Date(excelEpoch.getTime() + ms);
+        const pad = n => String(n).padStart(2, '0');
+        const formatted = `${pad(dateObj.getDate())}/${pad(dateObj.getMonth()+1)}/${dateObj.getFullYear()} ${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}:${pad(dateObj.getSeconds())}`;
+        return formatted;
+      }
+      // Si viene como string, devolver tal cual
+      return String(value);
+    }
+
     // Si es un número en Excel, ya viene como número
     if (typeof value === 'number') {
       return value;
@@ -251,13 +267,11 @@ class ExcelService {
     // Si es string, intentar conversiones inteligentes
     if (typeof value === 'string') {
       const trimmed = value.trim();
-      
       // Intentar convertir números
       if (/^\d+\.?\d*$/.test(trimmed)) {
         const num = parseFloat(trimmed);
         return !isNaN(num) ? num : trimmed;
       }
-
       // Intentar convertir fechas (si el header sugiere que es fecha)
       if (header.toLowerCase().includes('fecha') || header.toLowerCase().includes('date')) {
         const date = new Date(trimmed);
@@ -265,10 +279,8 @@ class ExcelService {
           return date.toISOString();
         }
       }
-
       return trimmed;
     }
-
     return value;
   }
 
@@ -348,6 +360,7 @@ class ExcelService {
       // Subir el JSON a GCP como log para el usuario
       try {
         const { uploadJsonToGCP, moveFileInGCP } = require('./gcpDownloadService');
+        const { Storage } = require('@google-cloud/storage');
         const bucketName = 'bucket-sheetbridge-prd-data';
         const destFolder = 'Publicaciones_json_vtex';
         // Usar nombre con fecha/hora para evitar sobrescribir
@@ -362,6 +375,23 @@ class ExcelService {
           const destPath = `Publicaciones_json_vtex/${path.basename(srcPath)}`;
           await moveFileInGCP(bucketName, srcPath, destPath);
           logOperations.excel.info(`Archivo Excel procesado movido en GCP de ${srcPath} a ${destPath}`);
+
+          // Limpiar la carpeta Archivos_sheets/ en el bucket de GCP
+          try {
+            const storage = new Storage({ keyFilename: path.resolve(__dirname, '../../gcp-service-account.json'), projectId: 'prd-promart-ec-maps-chk-api' });
+            const [files] = await storage.bucket(bucketName).getFiles({ prefix: 'Archivos_sheets/' });
+            await Promise.all(
+              files.map(async file => {
+                if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                  await file.delete();
+                  logOperations.excel.info(`Archivo Excel eliminado de Archivos_sheets/: ${file.name}`);
+                }
+              })
+            );
+            logOperations.excel.info('Carpeta Archivos_sheets/ limpiada en GCP.');
+          } catch (cleanErr) {
+            logOperations.excel.error('Error al limpiar la carpeta Archivos_sheets/ en GCP', cleanErr);
+          }
         }
       } catch (gcpErr) {
         logOperations.excel.error('Error al subir el archivo JSON o mover el Excel en GCP (Publicaciones_json_vtex)', gcpErr);
