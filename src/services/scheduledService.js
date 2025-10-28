@@ -122,26 +122,29 @@ class ScheduledService {
       logOperations.cron.info('Iniciando lectura de archivo Excel');
       const jsonData = await excelService.readExcelAndConvert();
 
-      if (!jsonData || jsonData.length === 0) {
+      // Validar datos
+      const sourceFile = jsonData?.metadata?.sourceFile || '';
+      if (!jsonData || !jsonData.metadata || !jsonData.metadata.totalRecords) {
         throw new Error('No se obtuvieron datos del archivo Excel');
       }
 
-      logOperations.cron.info(`Excel procesado: ${jsonData.length} registros encontrados`);
+      logOperations.cron.info(`Excel procesado: ${jsonData.metadata.totalRecords} registros encontrados`);
 
-      // 2. Enviar datos a VTEX
-      logOperations.cron.info('Enviando datos a VTEX');
-      const vtexResponse = await vtexService.sendData(jsonData);
-
-      if (!vtexResponse.success) {
-        throw new Error(`Error enviando datos a VTEX: ${vtexResponse.error || 'Error desconocido'}`);
+      // 2. Enviar datos a VTEX solo si no es Home_PRD_
+      if (sourceFile.toUpperCase().startsWith('HOME_PRD_')) {
+        logOperations.cron.info('Archivo de producción detectado, solo se sube al portal VTEX. No se envía a dataentities.');
+        processStatus.completeProcess(jsonData.metadata.totalRecords, null, { success: true, message: 'Solo subida a portal VTEX' });
+      } else {
+        logOperations.cron.info('Enviando datos a VTEX (dataentities)...');
+        const vtexResponse = await vtexService.sendData(jsonData);
+        if (!vtexResponse.success) {
+          throw new Error(`Error enviando datos a VTEX: ${vtexResponse.error || 'Error desconocido'}`);
+        }
+        processStatus.completeProcess(jsonData.metadata.totalRecords, null, vtexResponse);
+        logOperations.cron.info(`✅ Sincronización automática completada exitosamente`);
+        logOperations.cron.info(`Registros procesados: ${jsonData.metadata.totalRecords}`);
+        logOperations.cron.info(`Registros enviados exitosamente: ${vtexResponse.successfulRecords || jsonData.metadata.totalRecords}`);
       }
-
-      // 3. Completar proceso exitosamente
-      processStatus.completeProcess(jsonData.length, null, vtexResponse);
-
-      logOperations.cron.info(`✅ Sincronización automática completada exitosamente`);
-      logOperations.cron.info(`Registros procesados: ${jsonData.length}`);
-      logOperations.cron.info(`Registros enviados exitosamente: ${vtexResponse.successfulRecords || jsonData.length}`);
 
     } catch (error) {
       // Completar proceso con error

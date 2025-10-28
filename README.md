@@ -368,3 +368,15 @@ Para soporte técnico o reportar issues:
   - El formato se ajusta automáticamente en el código para reflejar la hora local de Perú.
 
 ---
+
+## 🆕 Subida automática a VTEX según ambiente detectado por nombre de archivo
+
+A partir de la versión actual, el sistema decide a qué ambiente de VTEX subir el archivo JSON generado según el nombre del archivo fuente Excel:
+
+- Si el nombre del archivo Excel comienza con `HOME_RD_`, el JSON se sube al portal de VTEX de ambiente **RD** (`promartrd`).
+- Si el nombre comienza con `HOME_PRD_`, el JSON se sube al portal de VTEX de ambiente **producción** (`promart`).
+- Otros nombres usan la configuración por defecto.
+
+Esta lógica se aplica automáticamente al procesar y subir el archivo, sin intervención manual. El nombre se detecta desde el campo `sourceFile` dentro del JSON generado.
+
+---
