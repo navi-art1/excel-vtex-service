@@ -14,6 +14,40 @@ const { createError } = require('../utils/errorHandler');
  * Servicio principal para manejo de archivos Excel
  */
 class ExcelService {
+  /**
+   * Valida el archivo Excel por ruta directa
+   */
+  async validateExcelFileByPath(filePath) {
+    try {
+      await fs.access(filePath);
+      const stats = await fs.stat(filePath);
+      if (!stats.isFile()) {
+        throw createError.excel('La ruta especificada no es un archivo');
+      }
+      const ext = path.extname(filePath).toLowerCase();
+      if (!['.xlsx', '.xls'].includes(ext)) {
+        throw createError.excel('El archivo debe ser .xlsx o .xls');
+      }
+      logOperations.excel.info(`Archivo Excel validado: ${filePath}`, {
+        size: stats.size,
+        modified: stats.mtime
+      });
+      return {
+        path: filePath,
+        size: stats.size,
+        modified: stats.mtime,
+        extension: ext
+      };
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        throw createError.excel(`Archivo no encontrado: ${filePath}`);
+      }
+      if (error.code === 'EACCES') {
+        throw createError.excel(`Sin permisos para acceder al archivo: ${filePath}`);
+      }
+      throw error;
+    }
+  }
   constructor() {
     this.lastProcessedData = null;
     this.lastProcessedTime = null;
@@ -75,16 +109,17 @@ class ExcelService {
   const { downloadLatestExcelFromGCPFolder } = require('./gcpDownloadService');
   const bucketName = 'bucket-sheetbridge-prd-data';
   const folder = 'Archivos_sheets/';
-  const destPath = path.resolve(config.files.excelPath);
-  const latestFile = await downloadLatestExcelFromGCPFolder(bucketName, folder, destPath);
-  this._latestGcpExcelFile = latestFile;
-  logOperations.excel.info(`Archivo Excel más reciente (${latestFile}) descargado de GCP. Iniciando lectura...`);
+  // Obtener el nombre del archivo más reciente en el bucket
+  const { getLatestExcelNameAndDownload } = require('./gcpDownloadService');
+  const { localPath, latestFileName, bucketFilePath } = await getLatestExcelNameAndDownload(bucketName, folder);
+  this._latestGcpExcelFile = bucketFilePath;
+  logOperations.excel.info(`Archivo Excel más reciente (${latestFileName}) descargado de GCP. Iniciando lectura...`);
 
-      // Validar archivo
-      const fileInfo = await this.validateExcelFile();
+  // Validar archivo usando el nombre real descargado
+  const fileInfo = await this.validateExcelFileByPath(localPath);
 
-      // Leer el archivo Excel
-      const workbook = XLSX.readFile(fileInfo.path);
+  // Leer el archivo Excel
+  const workbook = XLSX.readFile(localPath);
 
       // Verificar que el archivo tenga hojas
       if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
@@ -134,10 +169,10 @@ class ExcelService {
       // Crear estructura final solo con las hojas permitidas
       const finalData = {
         metadata: {
-          processedAt: new Date().toISOString(),
+          processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T')+':00',
           totalSheets: Object.keys(allSheetsData).length,
           totalRecords: totalRecords,
-          sourceFile: fileInfo.path,
+          sourceFile: latestFileName,
           sheetNames: Object.keys(allSheetsData),
           version: "1.0"
         },
@@ -204,7 +239,7 @@ class ExcelService {
       _metadata: {
         sourceSheet: sheetName,
         sourceRow: rowNumber,
-        processedAt: new Date().toISOString()
+        processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T')+':00'
       }
     };
 
@@ -331,9 +366,9 @@ class ExcelService {
       // Crear objeto con metadata
       const outputData = {
         metadata: {
-          processedAt: new Date().toISOString(),
+          processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T')+':00',
           recordCount: data.length,
-          sourceFile: config.files.excelPath,
+          sourceFile: data && data.metadata && data.metadata.sourceFile ? data.metadata.sourceFile : '',
           version: '1.0'
         },
         data: data

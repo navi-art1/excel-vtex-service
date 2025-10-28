@@ -182,11 +182,11 @@ class VtexService {
    */
   async sendBatch(batchData, batchNumber) {
     try {
-      // Preparar payload para VTEX
-      const payload = this.prepareVtexPayload(batchData);
+  // Preparar payload para VTEX Portal Files
+  const payload = this.prepareVtexPortalPayload(batchData);
 
-      // Realizar la petición
-      const response = await this.apiClient.post(config.vtex.endpoint, payload);
+  // Realizar la petición PUT
+  const response = await this.apiClient.put(config.vtex.endpoint, payload);
 
       logOperations.vtex.success(`Lote ${batchNumber} enviado exitosamente`);
 
@@ -210,34 +210,22 @@ class VtexService {
   /**
    * Prepara el payload según el formato esperado por VTEX
    */
-  prepareVtexPayload(data) {
-    // Este formato debe ajustarse según los requerimientos específicos de VTEX
-    // Ejemplo genérico:
-    
+  /**
+   * Prepara el payload para VTEX Portal Files
+   * El formato esperado es:
+   * {
+   *   "path": "nombre.json",
+   *   "text": "{ ...json... }"
+   * }
+   */
+  prepareVtexPortalPayload(data) {
+    // Asume que data es un array con un solo objeto (el JSON completo)
+    // Si hay más de uno, se toma el primero
+    const jsonObject = Array.isArray(data) ? data[0] : data;
+    const fileName = jsonObject?.fileName || 'output.json';
     return {
-      // Metadata del envío
-      metadata: {
-        source: 'excel-vtex-service',
-        timestamp: new Date().toISOString(),
-        recordCount: data.length,
-        account: config.vtex.account
-      },
-      
-      // Datos principales
-      items: data.map(item => {
-        // Remover metadata interna antes del envío
-        const { _metadata, ...cleanItem } = item;
-        
-        // Agregar campos requeridos por VTEX si es necesario
-        return {
-          ...cleanItem,
-          // Agregar campos específicos de VTEX aquí
-          // Por ejemplo:
-          // id: cleanItem.id || generateId(),
-          // status: 'active',
-          // lastModified: new Date().toISOString()
-        };
-      })
+      path: fileName,
+      text: JSON.stringify(jsonObject, null, 2)
     };
   }
 

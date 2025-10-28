@@ -3,8 +3,8 @@ const axios = require('axios');
 require('dotenv').config();
 
 async function uploadFileToVtexPortal(filePath, fileName) {
-  const { VTEX_ACCOUNT, VTEX_APP_KEY, VTEX_APP_TOKEN } = process.env;
-  const url = `https://${VTEX_ACCOUNT}.myvtex.com/api/portal/pvt/sites/default/files/${fileName}`;
+  const { VTEX_ACCOUNT, VTEX_APP_KEY, VTEX_APP_TOKEN, VTEX_ENDPOINT } = process.env;
+  const url = `https://${VTEX_ACCOUNT}.myvtex.com/api${VTEX_ENDPOINT}/${fileName}`;
 
   try {
     // Leer contenido del archivo

@@ -1,3 +1,47 @@
+/**
+ * Descarga el archivo Excel más reciente y lo guarda con su nombre original en la carpeta local input
+ * @param {string} bucketName
+ * @param {string} folder
+ * @returns {Promise<{localPath: string, latestFileName: string, bucketFilePath: string}>}
+ */
+async function getLatestExcelNameAndDownload(bucketName, folder) {
+  const [files] = await storage.bucket(bucketName).getFiles({ prefix: folder });
+  if (!files || files.length === 0) {
+    throw new Error(`No se encontraron archivos en la carpeta ${folder}`);
+  }
+  // Filtrar solo archivos .xlsx o .xls
+  const excelFiles = files.filter(f => f.name.endsWith('.xlsx') || f.name.endsWith('.xls'));
+  if (excelFiles.length === 0) {
+    throw new Error(`No se encontraron archivos Excel en la carpeta ${folder}`);
+  }
+  // Ordenar por fecha de actualización (metadata.updated)
+  const filesWithMeta = await Promise.all(
+    excelFiles.map(async f => {
+      const [meta] = await f.getMetadata();
+      return { name: f.name, updated: new Date(meta.updated) };
+    })
+  );
+  filesWithMeta.sort((a, b) => b.updated - a.updated);
+  const latest = filesWithMeta[0];
+  const latestFileName = path.basename(latest.name);
+  const localPath = path.resolve(__dirname, '../../data/input/', latestFileName);
+  await downloadExcelFromGCP(bucketName, latest.name, localPath);
+
+  // Eliminar archivos Excel antiguos en la carpeta del bucket, excepto el más reciente
+  const bucket = storage.bucket(bucketName);
+  await Promise.all(
+    filesWithMeta.slice(1).map(async fileMeta => {
+      try {
+        await bucket.file(fileMeta.name).delete();
+        console.log(`Archivo antiguo eliminado del bucket: ${fileMeta.name}`);
+      } catch (e) {
+        console.error(`No se pudo eliminar el archivo ${fileMeta.name}:`, e.message);
+      }
+    })
+  );
+
+  return { localPath, latestFileName, bucketFilePath: latest.name };
+}
 const { Storage } = require('@google-cloud/storage');
 const path = require('path');
 
@@ -104,5 +148,6 @@ module.exports = {
   downloadLatestExcelFromGCPFolder,
   uploadJsonToGCP,
   uploadFileToGCP,
-  moveFileInGCP
+  moveFileInGCP,
+  getLatestExcelNameAndDownload
 };

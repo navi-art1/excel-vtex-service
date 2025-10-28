@@ -111,6 +111,9 @@ const logOperations = {
     error: (message, error = {}) => {
       logger.error(`[CRON] ${message}`, { error: error.message, stack: error.stack });
     },
+    warn: (message, metadata = {}) => {
+      logger.warn(`[CRON] ${message}`, metadata);
+    },
     start: () => {
       logger.info('[CRON] 🚀 Iniciando proceso automático de sincronización');
     },

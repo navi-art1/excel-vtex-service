@@ -333,3 +333,38 @@ Para soporte técnico o reportar issues:
   - Los archivos de credenciales y secretos están excluidos del repositorio y del historial de git.
 - **Nombres de archivos en GCP:**
   - Todos los archivos JSON subidos a GCP ahora comienzan con `googleSheet_` para facilitar la identificación y gestión.
+
+## 🆕 Cambios VTEX Portal Files (Oct 2025)
+
+- **Nuevo endpoint para subida de archivos JSON a VTEX:**
+  - Ahora el archivo `googlesheet.json` se sube automáticamente al portal de archivos VTEX usando el endpoint:
+    ```
+    https://promart.myvtex.com/api/portal/pvt/sites/promartrd/files/googlesheet.json
+    ```
+  - El endpoint se configura en `.env` con la variable `VTEX_ENDPOINT=/portal/pvt/sites/promartrd/files`.
+
+- **Método de subida:**
+  - Se utiliza el método HTTP `PUT` para subir el archivo JSON.
+  - El payload enviado es:
+    ```json
+    {
+      "path": "googlesheet.json",
+      "text": "{ ...contenido del archivo googlesheet.json... }"
+    }
+    ```
+  - Las credenciales (`VTEX_APP_KEY`, `VTEX_APP_TOKEN`) y la cuenta (`VTEX_ACCOUNT`) también se configuran en `.env`.
+
+- **Ajuste en el código:**
+  - El módulo `uploadOutputToPortalModule.js` ahora utiliza el endpoint y la cuenta configurados en `.env` para construir la URL de subida.
+  - El proceso de subida es automático tras la generación exitosa del JSON.
+
+- **Validación y troubleshooting:**
+  - Si el archivo no se sube, verifica los logs y la configuración de las variables de entorno.
+  - El nombre del archivo subido a VTEX es siempre `googlesheet.json`.
+
+- **Hora de procesamiento en zona horaria Lima:**
+  - Todos los campos de fecha y hora (`processedAt`, etc.) ahora se generan usando la zona horaria `America/Lima`, independientemente de la ubicación del servidor o Docker.
+  - Esto evita que los usuarios vean fechas incorrectas si el servidor corre en otra región (por ejemplo, California).
+  - El formato se ajusta automáticamente en el código para reflejar la hora local de Perú.
+
+---

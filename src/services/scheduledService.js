@@ -159,7 +159,7 @@ class ScheduledService {
    */
   async handleScheduledTaskError(error) {
     const errorMessage = error.message || 'Error desconocido';
-    
+
     // Clasificar tipos de errores y decidir la acción
     if (error.type === 'EXCEL_ERROR') {
       logOperations.cron.warn('Error de Excel detectado - continuando con próxima ejecución');
@@ -173,6 +173,8 @@ class ScheduledService {
     } else if (error.code === 'ENOENT') {
       logOperations.cron.error('Archivo Excel no encontrado - deteniendo servicio');
       await this.stop();
+    } else if (errorMessage.includes('Error de validación: No hay datos para enviar a VTEX')) {
+      logOperations.cron.warn('Error de validación: No hay datos para enviar a VTEX', { error: error.message, stack: error.stack });
     } else {
       logOperations.cron.warn('Error general - continuando con próxima ejecución');
     }
