@@ -38,6 +38,12 @@ const config = {
     enableAuth: process.env.ENABLE_AUTH === 'true'
   },
 
+  // Configuración de Google Cloud Platform
+  gcp: {
+    projectId: 'prd-promart-ec-maps-chk-api',
+    bucketName: 'bucket-sheetbridge-prd-data',
+  },
+
   // Configuración de logs
   logging: {
     level: process.env.LOG_LEVEL || 'info',
@@ -81,6 +87,8 @@ function printConfig() {
   console.log(`   Cron Schedule: ${config.cron.schedule}`);
   console.log(`   Autenticación: ${config.security.enableAuth ? 'Habilitada' : 'Deshabilitada'}`);
   console.log(`   Nivel de logs: ${config.logging.level}`);
+  console.log(`   GCP Project: ${config.gcp.projectId}`);
+  console.log(`   GCP Bucket: ${config.gcp.bucketName}`);
 }
 
 module.exports = {

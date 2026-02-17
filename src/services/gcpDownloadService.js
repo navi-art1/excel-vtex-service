@@ -47,7 +47,9 @@ const path = require('path');
 
 // Ruta al archivo de credenciales (ajusta si lo pones en otro lado)
 const keyFilename = path.resolve(__dirname, '../../gcp-service-account.json');
-const storage = new Storage({ keyFilename, projectId: 'prd-promart-ec-maps-chk-api' });
+// Cargar configuración centralizada de GCP
+const { config } = require('../config/env');
+const storage = new Storage({ keyFilename, projectId: config.gcp.projectId });
 
 /**
  * Descarga un archivo Excel desde un bucket de GCP

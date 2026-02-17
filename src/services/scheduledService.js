@@ -130,9 +130,15 @@ class ScheduledService {
 
       logOperations.cron.info(`Excel procesado: ${jsonData.metadata.totalRecords} registros encontrados`);
 
-      // 2. Enviar datos a VTEX solo si no es Home_PRD_
-      if (sourceFile.toUpperCase().startsWith('HOME_PRD_')) {
-        logOperations.cron.info('Archivo de producción detectado, solo se sube al portal VTEX. No se envía a dataentities.');
+      // 2. Determinar si se debe enviar a dataentities o solo al portal
+      const upperSource = sourceFile.toUpperCase();
+      const isProduction = upperSource.startsWith('HOME_PRD_') || upperSource.startsWith('LOCATIONS_PRD_');
+      const isLocations = upperSource.startsWith('LOCATIONS_');
+      const skipDataEntities = isProduction || isLocations;
+
+      if (skipDataEntities) {
+        const reason = isLocations ? 'Archivo de Locations' : 'Archivo de producción';
+        logOperations.cron.info(`${reason} detectado, solo se sube al portal VTEX. No se envía a dataentities.`);
         processStatus.completeProcess(jsonData.metadata.totalRecords, null, { success: true, message: 'Solo subida a portal VTEX' });
       } else {
         logOperations.cron.info('Enviando datos a VTEX (dataentities)...');
