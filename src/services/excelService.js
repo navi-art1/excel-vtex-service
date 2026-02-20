@@ -102,12 +102,13 @@ class ExcelService {
   /**
    * Detecta el tipo de archivo según el nombre del archivo fuente
    * @param {string} fileName - Nombre del archivo Excel
-   * @returns {'home'|'locations'|'unknown'}
+   * @returns {'home'|'locations'|'sellers'|'unknown'}
    */
   detectFileType(fileName) {
     const upper = (fileName || '').toUpperCase();
     if (upper.startsWith('HOME_')) return 'home';
     if (upper.startsWith('LOCATIONS_')) return 'locations';
+    if (upper.startsWith('SELLERS_')) return 'sellers';
     return 'unknown';
   }
 
@@ -150,13 +151,36 @@ class ExcelService {
       const ALLOWED_SHEETS_BY_TYPE = {
         home: ["RD", "skus", "PROD", "Skus","Cintillos"],
         locations: ["DESPACHO"],
+        sellers: ["Sheet1"],
       };
       const allowedSheets = ALLOWED_SHEETS_BY_TYPE[fileType] || ALLOWED_SHEETS_BY_TYPE.home;
       logOperations.excel.info(`Hojas permitidas para tipo '${fileType}': ${allowedSheets.join(', ')}`);
 
       let finalData;
+      // === SELLERS: array de objetos ===
+      if (fileType === 'sellers') {
+        const sellersData = this.processSellersData(workbook, allowedSheets);
+        const totalRecords = sellersData.length;
+        
+        finalData = {
+          metadata: {
+            processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T')+':00',
+            totalSheets: 1,
+            totalRecords: totalRecords,
+            sourceFile: latestFileName,
+            sheetNames: allowedSheets.filter(s => workbook.SheetNames.includes(s)),
+            version: "1.0"
+          },
+          sheets: sellersData
+        };
+        await this.saveProcessedData(finalData, fileType);
+        
+        this.lastProcessedData = finalData;
+        this.lastProcessedTime = new Date();
+        logOperations.excel.info(`Sellers procesado exitosamente. ${totalRecords} registros extraídos`);
+
       // === LOCATIONS: array de arrays ===
-      if (fileType === 'locations') {
+      } else if (fileType === 'locations') {
         const locationsData = this.processLocationsData(workbook, allowedSheets);
         const totalRecords = locationsData.length > 0 ? locationsData.length - 1 : 0; // -1 por headers
         
@@ -343,6 +367,123 @@ class ExcelService {
   }
 
   /**
+   * Procesa datos del Excel para Sellers: devuelve array de objetos.
+   * Mapea headers específicos de sellers al formato JSON requerido.
+   * @param {object} workbook - Workbook de XLSX
+   * @param {Array} allowedSheets - Lista de hojas permitidas
+   * @returns {Array} Array de objetos con formato sellers
+   */
+  processSellersData(workbook, allowedSheets) {
+    const result = [];
+
+    for (const sheetName of workbook.SheetNames) {
+      if (!allowedSheets.includes(sheetName)) {
+        logOperations.excel.info(`Saltando hoja no permitida: ${sheetName}`);
+        continue;
+      }
+
+      const worksheet = workbook.Sheets[sheetName];
+      if (!worksheet) {
+        logOperations.excel.warn(`No se pudo leer la hoja: ${sheetName}`);
+        continue;
+      }
+
+      // Leer como array de arrays para procesar manualmente
+      const rawData = XLSX.utils.sheet_to_json(worksheet, {
+        header: 1,
+        defval: '',
+        blankrows: false,
+        raw: false, // Mantener formatos como texto
+      });
+
+      if (rawData.length < 2) {
+        logOperations.excel.warn(`La hoja ${sheetName} está vacía o sin datos`);
+        continue;
+      }
+
+      // Mapeo de headers del Excel a campos JSON
+      const HEADER_MAPPING = {
+        'Seller': 'sellerId',
+        'Abierto desde': 'openDate',
+        'Nro Ventas': 'sales',
+        '% entregas a tiempo': 'delivery',
+        'Calificacion estrellas': 'stars',
+        'url de "más productos del vendedor"': 'link',
+        'Nuevo seller': 'isNew'
+      };
+
+      // Obtener headers de la primera fila
+      const excelHeaders = rawData[0].map(h => String(h).trim());
+      
+      // Crear mapeo de índice a campo JSON
+      const indexToField = {};
+      excelHeaders.forEach((header, index) => {
+        const mappedField = HEADER_MAPPING[header];
+        if (mappedField) {
+          indexToField[index] = mappedField;
+        }
+      });
+
+      logOperations.excel.info(`Sellers - Headers mapeados: ${Object.keys(indexToField).length} campos`);
+
+      // Procesar filas de datos
+      const dataRows = rawData.slice(1).filter(row => this.isValidRow(row));
+
+      for (const row of dataRows) {
+        const sellerObj = {};
+        
+        // Mapear cada columna según el índice
+        Object.entries(indexToField).forEach(([index, fieldName]) => {
+          let value = row[index];
+          
+          // Procesar según el tipo de campo
+          if (value === null || value === undefined || value === '') {
+            // Valores vacíos: 0 para numéricos, "" para strings
+            if (fieldName === 'sales' || fieldName === 'stars' || fieldName === 'delivery' || fieldName === 'isNew') {
+              value = 0;
+            } else {
+              value = '';
+            }
+          } else {
+            // Convertir a string y hacer trim
+            value = String(value).trim();
+            
+            // sales, stars: números
+            if (fieldName === 'sales' || fieldName === 'stars') {
+              const num = parseFloat(value);
+              value = isNaN(num) ? 0 : num;
+            }
+            // delivery: extraer número de porcentaje "95%" -> 95
+            else if (fieldName === 'delivery') {
+              // Remover el símbolo % y convertir a número
+              const cleanValue = value.replace('%', '').trim();
+              const num = parseFloat(cleanValue);
+              value = isNaN(num) ? 0 : num;
+            }
+            // isNew: 0 o 1
+            else if (fieldName === 'isNew') {
+              const num = parseInt(value);
+              value = (isNaN(num) || num === 0) ? 0 : 1;
+            }
+          }
+          
+          sellerObj[fieldName] = value;
+        });
+
+        // Solo agregar si tiene al menos sellerId
+        if (sellerObj.sellerId && sellerObj.sellerId !== '') {
+          result.push(sellerObj);
+        }
+      }
+
+      logOperations.excel.info(`Hoja ${sheetName} (Sellers) procesada: ${result.length} registros`);
+    }
+
+    logOperations.excel.info(`Sellers procesado: ${result.length} registros totales`);
+    return result;
+  }
+
+  /**
    * Procesa una fila individual del Excel
    */
   processRow(headers, row, rowNumber, sheetName = 'Unknown') {
@@ -465,8 +606,8 @@ class ExcelService {
 
   /**
    * Guarda los datos procesados en un archivo JSON
-   * @param {object} data - Datos procesados del Excel
-   * @param {string} fileType - Tipo de archivo: 'home', 'locations', 'unknown'
+   * @param {object} data - Datos procesados del Excel con estructura { metadata,sheets }
+   * @param {string} fileType - Tipo de archivo: 'home', 'locations', 'sellers', 'unknown'
    */
   async saveProcessedData(data, fileType = 'home') {
     try {
@@ -476,12 +617,13 @@ class ExcelService {
       // Crear directorio si no existe
       await fs.mkdir(outputDir, { recursive: true });
 
-      // Crear objeto con metadata
+      // Crear objeto con metadata y envolver los datos
+      const sourceFileName = data?.metadata?.sourceFile || '';
       const outputData = {
         metadata: {
           processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T')+':00',
           recordCount: data.length,
-          sourceFile: data && data.metadata && data.metadata.sourceFile ? data.metadata.sourceFile : '',
+          sourceFile: sourceFileName,
           version: '1.0'
         },
         data: data
@@ -495,6 +637,7 @@ class ExcelService {
       const OUTPUT_FILE_NAMES = {
         home: 'googlesheet.json',
         locations: 'locations.json',
+        sellers: 'sellers.json',
       };
 
       // Subir a VTEX después de guardar exitosamente
@@ -519,7 +662,9 @@ class ExcelService {
         const bucketName = config.gcp.bucketName;
         const destFolder = 'Publicaciones_json_vtex';
         // Prefijo del nombre según tipo de archivo
-        const filePrefix = fileType === 'locations' ? 'locations' : 'googleSheet';
+        let filePrefix = 'googleSheet';
+        if (fileType === 'locations') filePrefix = 'locations';
+        else if (fileType === 'sellers') filePrefix = 'sellers';
         // Usar nombre con fecha/hora para evitar sobrescribir
         const now = new Date();
         const destFileName = `${filePrefix}_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.json`;
