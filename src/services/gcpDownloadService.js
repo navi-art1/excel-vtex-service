@@ -44,6 +44,7 @@ async function getLatestExcelNameAndDownload(bucketName, folder) {
 }
 const { Storage } = require('@google-cloud/storage');
 const path = require('path');
+const fs = require('fs').promises;
 
 // Ruta al archivo de credenciales (ajusta si lo pones en otro lado)
 const keyFilename = path.resolve(__dirname, '../../gcp-service-account.json');
@@ -58,6 +59,7 @@ const storage = new Storage({ keyFilename, projectId: config.gcp.projectId });
  * @param {string} destPath - Ruta local de destino
  */
 async function downloadExcelFromGCP(bucketName, srcFilename, destPath) {
+  await fs.mkdir(path.dirname(destPath), { recursive: true });
   await storage.bucket(bucketName).file(srcFilename).download({ destination: destPath });
   console.log(`Archivo descargado de GCP a ${destPath}`);
 }
