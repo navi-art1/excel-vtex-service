@@ -135,12 +135,15 @@ class ScheduledService {
       const isProduction = upperSource.startsWith('HOME_PRD_') || upperSource.startsWith('LOCATIONS_PRD_');
       const isLocations = upperSource.startsWith('LOCATIONS_');
       const isSellers = upperSource.startsWith('SELLERS_');
-      const skipDataEntities = isProduction || isLocations || isSellers;
+      const isDestacados = upperSource.startsWith('DESTACADOS_');
+
+      const skipDataEntities = isProduction || isLocations || isSellers || isDestacados;
 
       if (skipDataEntities) {
         let reason = 'Archivo de producción';
         if (isLocations) reason = 'Archivo de Locations';
         if (isSellers) reason = 'Archivo de Sellers';
+        if (isDestacados) reason = 'Archivo de Destacados';
         logOperations.cron.info(`${reason} detectado, solo se sube al portal VTEX. No se envía a dataentities.`);
         processStatus.completeProcess(jsonData.metadata.totalRecords, null, { success: true, message: 'Solo subida a portal VTEX' });
       } else {

@@ -9,6 +9,7 @@ const path = require('path');
 const { config } = require('../config/env');
 const { logOperations } = require('../utils/logger');
 const { createError } = require('../utils/errorHandler');
+const { slugify } = require('../utils/string');
 
 /**
  * Servicio principal para manejo de archivos Excel
@@ -102,13 +103,14 @@ class ExcelService {
   /**
    * Detecta el tipo de archivo según el nombre del archivo fuente
    * @param {string} fileName - Nombre del archivo Excel
-   * @returns {'home'|'locations'|'sellers'|'unknown'}
+   * @returns {'home'|'locations'|'sellers'|'destacados'|'unknown'}
    */
   detectFileType(fileName) {
     const upper = (fileName || '').toUpperCase();
     if (upper.startsWith('HOME_')) return 'home';
     if (upper.startsWith('LOCATIONS_')) return 'locations';
     if (upper.startsWith('SELLERS_')) return 'sellers';
+    if (upper.startsWith('DESTACADOS_')) return 'destacados';
     return 'unknown';
   }
 
@@ -152,13 +154,52 @@ class ExcelService {
         home: ["RD", "skus", "PROD", "Skus","Cintillos"],
         locations: ["DESPACHO"],
         sellers: ["Sheet1"],
+        destacados: ["Categoria","Colecciones","Top Categorias"],
       };
       const allowedSheets = ALLOWED_SHEETS_BY_TYPE[fileType] || ALLOWED_SHEETS_BY_TYPE.home;
       logOperations.excel.info(`Hojas permitidas para tipo '${fileType}': ${allowedSheets.join(', ')}`);
 
       let finalData;
+      // === DESTACADOS: una carga por hoja ===
+      if (fileType === 'destacados') {
+        const sheetsToProcess = allowedSheets.filter(s => workbook.SheetNames.includes(s));
+        let lastData = null;
+
+        let totalRecords = 0;
+
+        for (const sheetName of sheetsToProcess) {
+          const sheetData = this.processDestacadosData(workbook, [sheetName]);
+          const totalRecordsSheet = sheetData.length;
+
+          finalData = {
+            metadata: {
+              processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T')+':00',
+              totalSheets: 1,
+              totalRecords: totalRecordsSheet,
+              sourceFile: latestFileName,
+              sheetNames: [sheetName],
+              version: "1.0"
+            },
+            sheets: sheetData
+          };
+
+          await this.saveProcessedData(finalData, fileType, sheetName);
+          logOperations.excel.info(`Destacados [${sheetName}] procesado. ${totalRecordsSheet} registros extraídos`);
+          lastData = finalData;
+          totalRecords += totalRecordsSheet;
+        }
+
+        this.lastProcessedData = lastData;
+        this.lastProcessedTime = new Date();
+        logOperations.excel.info(`Todas las hojas de Destacados procesadas (${sheetsToProcess.length} hojas)`);
+
+        finalData.metadata.totalSheets = sheetsToProcess.length;
+        finalData.metadata.totalRecords = totalRecords;
+        finalData.metadata.sheetNames = sheetsToProcess;
+        // finalData.sheets // TODO: Evaluar necesidad de hacer un merge de todas las hojas.
+
       // === SELLERS: array de objetos ===
-      if (fileType === 'sellers') {
+      } else if (fileType === 'sellers') {
         const sellersData = this.processSellersData(workbook, allowedSheets);
         const totalRecords = sellersData.length;
         
@@ -305,12 +346,17 @@ class ExcelService {
     }
   }
 
+  // Procesamiento sin transformación
+  processDestacadosData(workbook, allowedSheets) { 
+    return this.processLocationsData(workbook, allowedSheets, 'destacados');
+  }
+
   /**
-   * Procesa datos del Excel para Locations: devuelve array de arrays.
+   * Procesa datos del Excel para Locations u otros: devuelve array de arrays.
    * Formato: [ [headers...], [fila1...], [fila2...], ... ]
    * Valores como strings, trailing empty strings eliminados.
    */
-  processLocationsData(workbook, allowedSheets) {
+  processLocationsData(workbook, allowedSheets, fileType = 'locations') {
     const result = [];
 
     for (const sheetName of workbook.SheetNames) {
@@ -348,21 +394,25 @@ class ExcelService {
       for (const row of dataRows) {
         const stringRow = headers.map((_, colIndex) => {
           const val = row[colIndex];
-          if (val === null || val === undefined || val === '') return '';
+          if (val === null || val === undefined || val === '' || val === '#REF!') return '';
           if (typeof val === 'boolean') return val ? 'TRUE' : 'FALSE';
           return String(val);
         });
-        // Eliminar strings vacíos del final del array
-        while (stringRow.length > 0 && stringRow[stringRow.length - 1] === '') {
-          stringRow.pop();
-        }
         result.push(stringRow);
       }
 
-      logOperations.excel.info(`Hoja ${sheetName} (Locations) procesada: ${dataRows.length} registros`);
+      logOperations.excel.info(`Hoja ${sheetName} (${fileType}) procesada: ${dataRows.length} registros`);
     }
 
-    logOperations.excel.info(`Locations procesado: ${result.length - 1} filas de datos + 1 fila de headers`);
+    // Eliminar strings vacíos al final de cada fila (headers y datos) en un solo paso
+    result.forEach(row => {
+      while (row.length > 0 && row[row.length - 1] === '') row.pop();
+    });
+
+    // Eliminar arrays vacíos que hayan quedado al final de result
+    while (result.length > 0 && result[result.length - 1].length === 0) result.pop();
+
+    logOperations.excel.info(`${fileType} procesado: ${result.length - 1} filas de datos + 1 fila de headers`);
     return result;
   }
 
@@ -607,9 +657,9 @@ class ExcelService {
   /**
    * Guarda los datos procesados en un archivo JSON
    * @param {object} data - Datos procesados del Excel con estructura { metadata,sheets }
-   * @param {string} fileType - Tipo de archivo: 'home', 'locations', 'sellers', 'unknown'
+   * @param {string} fileType - Tipo de archivo: 'home', 'locations', 'sellers', 'destacados', 'unknown'
    */
-  async saveProcessedData(data, fileType = 'home') {
+  async saveProcessedData(data, fileType = 'home', sheetName = null) {
     try {
       const outputPath = path.resolve(config.files.outputJsonPath);
       const outputDir = path.dirname(outputPath);
@@ -633,18 +683,24 @@ class ExcelService {
       await fs.writeFile(outputPath, JSON.stringify(outputData, null, 2), 'utf8');
       logOperations.excel.info(`Datos guardados en: ${outputPath}`);
 
-      // Nombre del archivo de salida según el tipo de archivo
-      const OUTPUT_FILE_NAMES = {
-        home: 'googlesheet.json',
-        locations: 'locations.json',
-        sellers: 'sellers.json',
-      };
+      // Nombre del archivo de salida según el tipo de archivo (y hoja para destacados)
+      let fileName;
+      if (fileType === 'destacados' && sheetName) {
+        fileName = `destacados_${slugify(sheetName)}.json`;
+      } else {
+        const OUTPUT_FILE_NAMES = {
+          home: 'googlesheet.json',
+          locations: 'locations.json',
+          sellers: 'sellers.json',
+          destacados: 'destacados.json'
+        };
+        fileName = OUTPUT_FILE_NAMES[fileType] || 'output.json';
+      }
 
       // Subir a VTEX después de guardar exitosamente
       try {
         const { uploadFileToVtexPortal } = require('./uploadOutputToPortalModule');
-        const fileName = OUTPUT_FILE_NAMES[fileType] || 'output.json';
-        logOperations.excel.info(`Subiendo a VTEX como '${fileName}' (tipo: ${fileType})`);
+        logOperations.excel.info(`Subiendo a VTEX como '${fileName}' (tipo: ${fileType}${sheetName ? `, hoja: ${sheetName}` : ''})`);
         const uploadResult = await uploadFileToVtexPortal(outputPath, fileName);
         if (uploadResult) {
           logOperations.excel.info('Archivo JSON subido exitosamente a VTEX');
@@ -661,10 +717,11 @@ class ExcelService {
         const { Storage } = require('@google-cloud/storage');
         const bucketName = config.gcp.bucketName;
         const destFolder = 'Publicaciones_json_vtex';
-        // Prefijo del nombre según tipo de archivo
+        // Prefijo del nombre según tipo de archivo (y hoja para destacados)
         let filePrefix = 'googleSheet';
         if (fileType === 'locations') filePrefix = 'locations';
         else if (fileType === 'sellers') filePrefix = 'sellers';
+        else if (fileType === 'destacados') filePrefix = sheetName ? `destacados_${slugify(sheetName)}` : 'destacados';
         // Usar nombre con fecha/hora para evitar sobrescribir
         const now = new Date();
         const destFileName = `${filePrefix}_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.json`;
@@ -677,6 +734,8 @@ class ExcelService {
           const destPath = `Publicaciones_json_vtex/${path.basename(srcPath)}`;
           await moveFileInGCP(bucketName, srcPath, destPath);
           logOperations.excel.info(`Archivo Excel procesado movido en GCP de ${srcPath} a ${destPath}`);
+          // Limpiar la referencia para evitar que llamadas posteriores (ej: múltiples hojas destacados) reintenten el movimiento
+          this._latestGcpExcelFile = null;
 
           // Limpiar la carpeta Archivos_sheets/ en el bucket de GCP
           try {
