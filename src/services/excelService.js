@@ -103,7 +103,7 @@ class ExcelService {
   /**
    * Detecta el tipo de archivo según el nombre del archivo fuente
    * @param {string} fileName - Nombre del archivo Excel
-   * @returns {'home'|'locations'|'sellers'|'destacados'|'unknown'}
+   * @returns {'home'|'locations'|'sellers'|'destacados'|'variantes'|'unknown'}
    */
   detectFileType(fileName) {
     const upper = (fileName || '').toUpperCase();
@@ -111,6 +111,7 @@ class ExcelService {
     if (upper.startsWith('LOCATIONS_')) return 'locations';
     if (upper.startsWith('SELLERS_')) return 'sellers';
     if (upper.startsWith('DESTACADOS_')) return 'destacados';
+    if (upper.startsWith('VARIANTES_')) return 'variantes';
     return 'unknown';
   }
 
@@ -155,13 +156,44 @@ class ExcelService {
         locations: ["DESPACHO"],
         sellers: ["Sheet1"],
         destacados: ["Categoria","Colecciones","Top Categorias"],
+        variantes: ["Variantes"]
       };
       const allowedSheets = ALLOWED_SHEETS_BY_TYPE[fileType] || ALLOWED_SHEETS_BY_TYPE.home;
       logOperations.excel.info(`Hojas permitidas para tipo '${fileType}': ${allowedSheets.join(', ')}`);
 
       let finalData;
+
+      // === VARIANTES: Objeto ===
+      if (fileType === 'variantes') {
+        const variantsData = this.processVariantsData(workbook, allowedSheets);
+        
+        const variantsDataisArray = Array.isArray(variantsData);
+
+        const totalRecords = variantsDataisArray ? 
+          (variantsData.length > 0 ? variantsData.length - 1 : 0) : // -1 por headers
+          Object.keys(variantsData).length; 
+        
+        finalData = {
+          metadata: {
+            processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T')+':00',
+            totalSheets: 1,
+            totalRecords: totalRecords,
+            sourceFile: latestFileName,
+            sheetNames: allowedSheets.filter(s => workbook.SheetNames.includes(s)),
+            version: "1.0"
+          },
+          sheets: variantsData
+        };
+
+        // Carga a VTEX
+        await this.saveProcessedData(finalData, fileType);
+        
+        this.lastProcessedData = finalData;
+        this.lastProcessedTime = new Date();
+        logOperations.excel.info(`Variantes procesado exitosamente. ${totalRecords} registros obtenidos`);
+
       // === DESTACADOS: una carga por hoja ===
-      if (fileType === 'destacados') {
+      } else if (fileType === 'destacados') {
         const sheetsToProcess = allowedSheets.filter(s => workbook.SheetNames.includes(s));
         let lastData = null;
 
@@ -344,6 +376,52 @@ class ExcelService {
       logOperations.excel.error(`Error estructurando datos de la hoja ${sheetName}`, error);
       throw createError.excel(`Error al procesar la estructura de datos de la hoja ${sheetName}`, { error: error.message });
     }
+  }
+
+  transformarEnArbol(rawData) {
+    const arbol = {};
+
+    // Iteramos desde 1 para omitir cabeceras
+    for (let i = 1; i < rawData.length; i++) {
+        const fila = rawData[i];
+
+        const depId = fila[1];
+        const catId = fila[3];
+        const subcatId = fila[5];
+        const atributo = fila[6]; // Columna G
+
+        if (!depId) continue; // Por seguridad, si la fila está vacía
+
+        // 1. Nivel Departamento
+        if (!arbol[depId]) {
+            arbol[depId] = { atributo: null, categorias: {} };
+        }
+
+        if (catId) {
+            // 2. Nivel Categoría
+            if (!arbol[depId].categorias[catId]) {
+                arbol[depId].categorias[catId] = { atributo: null, subcategorias: {} };
+            }
+
+            if (subcatId) {
+                // 3. Nivel Subcategoría (Asignamos el atributo a la subcategoría específica)
+                arbol[depId].categorias[catId].subcategorias[subcatId] = atributo;
+            } else {
+                // Si no hay subcategoría en la fila, el atributo aplica a toda la Categoría
+                arbol[depId].categorias[catId].atributo = atributo;
+            }
+        } else {
+            // Si no hubiera categoría, el atributo aplicaría a todo el Departamento
+            arbol[depId].atributo = atributo;
+        }
+    }
+
+    return arbol;
+  }
+
+  processVariantsData(workbook, allowedSheets) {
+    const rawData = this.processLocationsData(workbook, allowedSheets, 'variantes');
+    return this.transformarEnArbol(rawData);
   }
 
   // Procesamiento sin transformación
@@ -657,7 +735,7 @@ class ExcelService {
   /**
    * Guarda los datos procesados en un archivo JSON
    * @param {object} data - Datos procesados del Excel con estructura { metadata,sheets }
-   * @param {string} fileType - Tipo de archivo: 'home', 'locations', 'sellers', 'destacados', 'unknown'
+   * @param {string} fileType - Tipo de archivo: 'home', 'locations', 'sellers', 'destacados', 'variantes', 'unknown'
    */
   async saveProcessedData(data, fileType = 'home', sheetName = null) {
     try {
@@ -692,7 +770,8 @@ class ExcelService {
           home: 'googlesheet.json',
           locations: 'locations.json',
           sellers: 'sellers.json',
-          destacados: 'destacados.json'
+          destacados: 'destacados.json',
+          variantes: 'variantes.json',
         };
         fileName = OUTPUT_FILE_NAMES[fileType] || 'output.json';
       }
@@ -721,6 +800,7 @@ class ExcelService {
         let filePrefix = 'googleSheet';
         if (fileType === 'locations') filePrefix = 'locations';
         else if (fileType === 'sellers') filePrefix = 'sellers';
+        else if (fileType === 'variantes') filePrefix = 'variantes';
         else if (fileType === 'destacados') filePrefix = sheetName ? `destacados_${slugify(sheetName)}` : 'destacados';
         // Usar nombre con fecha/hora para evitar sobrescribir
         const now = new Date();
