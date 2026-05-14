@@ -25,7 +25,8 @@ async function uploadFileToVtexPortal(filePath, fileName) {
     }
 
     // Detectar el endpoint y account según el prefijo del archivo fuente
-    const upperSourceFile = sourceFileName.toUpperCase();
+    const upperSourceFile = String(sourceFileName || '').toUpperCase();
+    const upperSourceFileForBlacklist = upperSourceFile.replace(/^[^A-Z0-9]+/, '');
     let endpoint = '';
     let account = '';
     if (upperSourceFile.startsWith('HOME_RD_')) {
@@ -56,6 +57,12 @@ async function uploadFileToVtexPortal(filePath, fileName) {
       endpoint = '/portal/pvt/sites/promartrd/files';
       account = 'promartrd';
     } else if (upperSourceFile.startsWith('VARIANTES_PRD_')) {
+      endpoint = '/portal/pvt/sites/promart/files';
+      account = 'promart';
+    } else if (upperSourceFileForBlacklist.startsWith('BLACKLIST_RD_')) {
+      endpoint = '/portal/pvt/sites/promartrd/files';
+      account = 'promartrd';
+    } else if (upperSourceFileForBlacklist.startsWith('BLACKLIST_PRD_')) {
       endpoint = '/portal/pvt/sites/promart/files';
       account = 'promart';
     } else {

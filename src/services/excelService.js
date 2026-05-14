@@ -112,6 +112,7 @@ class ExcelService {
     if (upper.startsWith('SELLERS_')) return 'sellers';
     if (upper.startsWith('DESTACADOS_')) return 'destacados';
     if (upper.startsWith('VARIANTES_')) return 'variantes';
+    if (upper.startsWith('BLACKLIST_')) return 'blacklist';
     return 'unknown';
   }
 
@@ -132,7 +133,15 @@ class ExcelService {
   logOperations.excel.info(`Archivo Excel más reciente (${latestFileName}) descargado de GCP. Iniciando lectura...`);
 
   // Detectar tipo de archivo (home, locations, unknown)
-  const fileType = this.detectFileType(latestFileName);
+  let fileType = this.detectFileType(latestFileName);
+  if (fileType === 'unknown') {
+    const blacklistCandidate = String(latestFileName || '')
+      .toUpperCase()
+      .replace(/^[^A-Z0-9]+/, '');
+    if (blacklistCandidate.startsWith('BLACKLIST_')) {
+      fileType = 'blacklist';
+    }
+  }
   this._currentFileType = fileType;
   logOperations.excel.info(`Tipo de archivo detectado: ${fileType} (archivo: ${latestFileName})`);
 
@@ -156,7 +165,8 @@ class ExcelService {
         locations: ["DESPACHO"],
         sellers: ["Sheet1"],
         destacados: ["Categoria","Colecciones","Top Categorias"],
-        variantes: ["Variantes"]
+        variantes: ["Variantes"],
+        blacklist: ["SkusBlacklistPV"]
       };
       const allowedSheets = ALLOWED_SHEETS_BY_TYPE[fileType] || ALLOWED_SHEETS_BY_TYPE.home;
       logOperations.excel.info(`Hojas permitidas para tipo '${fileType}': ${allowedSheets.join(', ')}`);
@@ -229,6 +239,33 @@ class ExcelService {
         finalData.metadata.totalRecords = totalRecords;
         finalData.metadata.sheetNames = sheetsToProcess;
         // finalData.sheets // TODO: Evaluar necesidad de hacer un merge de todas las hojas.
+
+      // === BLACKLIST: array de objetos ===
+      } else if (fileType === 'blacklist') {
+        const blacklistData = this.processBlacklistData(workbook, allowedSheets);
+        const totalRecords = blacklistData.length;
+        const normalizeSheetName = (name) => String(name || '').trim().toLowerCase();
+        const matchedSheetNames = workbook.SheetNames.filter(sheetName =>
+          allowedSheets.some(allowed => normalizeSheetName(allowed) === normalizeSheetName(sheetName))
+        );
+
+        finalData = {
+          metadata: {
+            processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T')+':00',
+            totalSheets: 1,
+            totalRecords: totalRecords,
+            sourceFile: latestFileName,
+            sheetNames: matchedSheetNames,
+            version: "1.0"
+          },
+          sheets: blacklistData,
+          skus: blacklistData.map(item => item.sku).filter(Boolean)
+        };
+        await this.saveProcessedData(finalData, fileType);
+
+        this.lastProcessedData = finalData;
+        this.lastProcessedTime = new Date();
+        logOperations.excel.info(`Blacklist procesado exitosamente. ${totalRecords} registros extraídos`);
 
       // === SELLERS: array de objetos ===
       } else if (fileType === 'sellers') {
@@ -611,6 +648,132 @@ class ExcelService {
     return result;
   }
 
+  processBlacklistData(workbook, allowedSheets) {
+    const result = [];
+    const normalizeSheetName = (name) => String(name || '').trim().toLowerCase();
+    const normalizeCellValue = (value) => {
+      if (value === null || value === undefined || value === '') return '';
+      return String(value).trim();
+    };
+    const getBlacklistPageValue = (worksheet, rowNumber, colIndex, fallbackValue) => {
+      const fallback = normalizeCellValue(fallbackValue);
+      const cellAddress = XLSX.utils.encode_cell({ c: Number(colIndex), r: rowNumber - 1 });
+      const cell = worksheet[cellAddress];
+
+      if (!cell) {
+        return fallback === '#NAME?' ? '' : fallback;
+      }
+
+      const formattedValue = normalizeCellValue(cell.w);
+      if (formattedValue && formattedValue !== '#NAME?') {
+        return formattedValue;
+      }
+
+      if (cell.l && cell.l.Target) {
+        const target = normalizeCellValue(cell.l.Target);
+        if (target) {
+          try {
+            const parsed = new URL(target);
+            return parsed.pathname || target;
+          } catch {
+            return target;
+          }
+        }
+      }
+
+      if (typeof cell.f === 'string' && cell.f.trim()) {
+        const quotedTokens = [...cell.f.matchAll(/"([^"]*)"/g)].map(match => match[1].trim()).filter(Boolean);
+
+        // HYPERLINK/HIPERVINCULO normally uses the 2nd quoted token as visible text.
+        if (quotedTokens.length >= 2) {
+          return quotedTokens[1];
+        }
+
+        if (quotedTokens.length === 1) {
+          try {
+            const parsed = new URL(quotedTokens[0]);
+            return parsed.pathname || quotedTokens[0];
+          } catch {
+            return quotedTokens[0];
+          }
+        }
+      }
+
+      return fallback === '#NAME?' ? '' : fallback;
+    };
+
+    for (const sheetName of workbook.SheetNames) {
+      if (!allowedSheets.some(allowed => normalizeSheetName(allowed) === normalizeSheetName(sheetName))) {
+        logOperations.excel.info(`Saltando hoja no permitida: ${sheetName}`);
+        continue;
+      }
+
+      const worksheet = workbook.Sheets[sheetName];
+      if (!worksheet) {
+        logOperations.excel.warn(`No se pudo leer la hoja: ${sheetName}`);
+        continue;
+      }
+
+      const rawData = XLSX.utils.sheet_to_json(worksheet, {
+        header: 1,
+        defval: '',
+        blankrows: false,
+        raw: false,
+      });
+
+      if (rawData.length < 2) {
+        logOperations.excel.warn(`La hoja ${sheetName} está vacía o sin datos`);
+        continue;
+      }
+
+      const HEADER_MAPPING = {
+        'Departamento': 'department',
+        'Seller': 'seller',
+        'Página': 'page',
+        'Pagina': 'page',
+        'SKU': 'sku'
+      };
+
+      const excelHeaders = rawData[0].map(h => String(h).trim());
+
+      const indexToField = {};
+      excelHeaders.forEach((header, index) => {
+        const mappedField = HEADER_MAPPING[header];
+        if (mappedField) {
+          indexToField[index] = mappedField;
+        }
+      });
+
+      logOperations.excel.info(`Blacklist - Headers mapeados: ${Object.keys(indexToField).length} campos`);
+
+      const dataRows = rawData.slice(1).filter(row => this.isValidRow(row));
+      const rowOffset = 2;
+
+      dataRows.forEach((row, rowIndex) => {
+        const blacklistObj = {};
+        const rowNumber = rowIndex + rowOffset;
+
+        Object.entries(indexToField).forEach(([index, fieldName]) => {
+          let value = row[index];
+          if (fieldName === 'page') {
+            blacklistObj[fieldName] = getBlacklistPageValue(worksheet, rowNumber, index, value);
+          } else {
+            blacklistObj[fieldName] = normalizeCellValue(value);
+          }
+        });
+
+        if (blacklistObj.seller && blacklistObj.seller !== '') {
+          result.push(blacklistObj);
+        }
+      });
+
+      logOperations.excel.info(`Hoja ${sheetName} (Blacklist) procesada: ${result.length} registros`);
+    }
+
+    logOperations.excel.info(`Blacklist procesado: ${result.length} registros totales`);
+    return result;
+  }
+
   /**
    * Procesa una fila individual del Excel
    */
@@ -772,6 +935,7 @@ class ExcelService {
           sellers: 'sellers.json',
           destacados: 'destacados.json',
           variantes: 'variantes.json',
+          blacklist: 'blacklistSellers.json',
         };
         fileName = OUTPUT_FILE_NAMES[fileType] || 'output.json';
       }
@@ -801,6 +965,7 @@ class ExcelService {
         if (fileType === 'locations') filePrefix = 'locations';
         else if (fileType === 'sellers') filePrefix = 'sellers';
         else if (fileType === 'variantes') filePrefix = 'variantes';
+        else if (fileType === 'blacklist') filePrefix = 'blacklistSellers';
         else if (fileType === 'destacados') filePrefix = sheetName ? `destacados_${slugify(sheetName)}` : 'destacados';
         // Usar nombre con fecha/hora para evitar sobrescribir
         const now = new Date();

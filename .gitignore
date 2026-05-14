@@ -125,6 +125,10 @@ Thumbs.db
 *.swo
 *~
 
+# Credenciales GCP (nunca commitear)
+gcp-service-account.json
+*-service-account.json
+
 # Archivos de backup
 *.bak
 *.backup
