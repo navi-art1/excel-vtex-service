@@ -161,7 +161,7 @@ class ExcelService {
       // Procesar solo las hojas permitidas
       // Según el tipo de archivo
       const ALLOWED_SHEETS_BY_TYPE = {
-        home: ["RD", "skus", "PROD", "Skus", "Cintillos", "LandingWow"],
+        home: ["RD", "skus", "PROD", "Skus", "Cintillos", "LandingWow", "Landing", "Landing1"],
         locations: ["DESPACHO"],
         sellers: ["Sheet1"],
         destacados: ["Categoria","Colecciones","Top Categorias"],
