@@ -113,6 +113,7 @@ class ExcelService {
     if (upper.startsWith('DESTACADOS_')) return 'destacados';
     if (upper.startsWith('VARIANTES_')) return 'variantes';
     if (upper.startsWith('BLACKLIST_')) return 'blacklist';
+    if (upper.startsWith('TAGS_')) return 'tags';
     return 'unknown';
   }
 
@@ -166,7 +167,8 @@ class ExcelService {
         sellers: ["Sheet1"],
         destacados: ["Categoria","Colecciones","Top Categorias"],
         variantes: ["Variantes"],
-        blacklist: ["SkusBlacklistPV"]
+        blacklist: ["SkusBlacklistPV"],
+        tags: ["TAGS"]
       };
       const allowedSheets = ALLOWED_SHEETS_BY_TYPE[fileType] || ALLOWED_SHEETS_BY_TYPE.home;
       logOperations.excel.info(`Hojas permitidas para tipo '${fileType}': ${allowedSheets.join(', ')}`);
@@ -310,8 +312,39 @@ class ExcelService {
         this.lastProcessedData = finalData;
         this.lastProcessedTime = new Date();
         logOperations.excel.info(`Locations procesado exitosamente. ${totalRecords} registros extraídos`);
+      // === TAGS: array de objetos ===
+      } else if (fileType === 'tags') {
+        const worksheet = workbook.Sheets['TAGS'];
+        if (!worksheet) {
+          throw createError.excel("La hoja 'TAGS' no existe en el archivo Excel");
+        }
 
-      // === HOME (y otros): estructura con metadata + sheets ===
+        const rawTagsData = XLSX.utils.sheet_to_json(worksheet, {
+          defval: null,
+          blankrows: false,
+          raw: false
+        });
+
+        finalData = {
+          metadata: {
+            processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T') + ':00',
+            totalSheets: 1,
+            totalRecords: rawTagsData.length,
+            sourceFile: latestFileName,
+            sheetNames: ['TAGS'],
+            version: "1.0"
+          },
+          sheets: {
+            TAGS: rawTagsData
+          }
+        };
+
+        await this.saveProcessedData(finalData, fileType);
+
+        this.lastProcessedData = finalData;
+        this.lastProcessedTime = new Date();
+        logOperations.excel.info(`Tags procesado exitosamente. ${rawTagsData.length} registros extraídos`);
+        // === HOME (y otros): estructura con metadata + sheets ===
       } else {
         const allSheetsData = {};
         let totalRecords = 0;
@@ -901,113 +934,93 @@ class ExcelService {
    * @param {string} fileType - Tipo de archivo: 'home', 'locations', 'sellers', 'destacados', 'variantes', 'unknown'
    */
   async saveProcessedData(data, fileType = 'home', sheetName = null) {
-    try {
-      const outputPath = path.resolve(config.files.outputJsonPath);
-      const outputDir = path.dirname(outputPath);
-
-      // Crear directorio si no existe
-      await fs.mkdir(outputDir, { recursive: true });
-
-      // Crear objeto con metadata y envolver los datos
-      const sourceFileName = data?.metadata?.sourceFile || '';
-      const outputData = {
-        metadata: {
-          processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T')+':00',
-          recordCount: data.length,
-          sourceFile: sourceFileName,
-          version: '1.0'
-        },
-        data: data
+  try {
+    // 1. Determinar el nombre del archivo primero
+    let fileName;
+    if (fileType === 'destacados' && sheetName) {
+      fileName = `destacados_${slugify(sheetName)}.json`;
+    } else {
+      const OUTPUT_FILE_NAMES = {
+        home: 'googlesheet.json',
+        locations: 'locations.json',
+        sellers: 'sellers.json',
+        destacados: 'destacados.json',
+        variantes: 'variantes.json',
+        blacklist: 'blacklistSellers.json',
+        tags: 'tags_promart.json'
       };
-
-      // Guardar como JSON
-      await fs.writeFile(outputPath, JSON.stringify(outputData, null, 2), 'utf8');
-      logOperations.excel.info(`Datos guardados en: ${outputPath}`);
-
-      // Nombre del archivo de salida según el tipo de archivo (y hoja para destacados)
-      let fileName;
-      if (fileType === 'destacados' && sheetName) {
-        fileName = `destacados_${slugify(sheetName)}.json`;
-      } else {
-        const OUTPUT_FILE_NAMES = {
-          home: 'googlesheet.json',
-          locations: 'locations.json',
-          sellers: 'sellers.json',
-          destacados: 'destacados.json',
-          variantes: 'variantes.json',
-          blacklist: 'blacklistSellers.json',
-        };
-        fileName = OUTPUT_FILE_NAMES[fileType] || 'output.json';
-      }
-
-      // Subir a VTEX después de guardar exitosamente
-      try {
-        const { uploadFileToVtexPortal } = require('./uploadOutputToPortalModule');
-        logOperations.excel.info(`Subiendo a VTEX como '${fileName}' (tipo: ${fileType}${sheetName ? `, hoja: ${sheetName}` : ''})`);
-        const uploadResult = await uploadFileToVtexPortal(outputPath, fileName);
-        if (uploadResult) {
-          logOperations.excel.info('Archivo JSON subido exitosamente a VTEX');
-        } else {
-          logOperations.excel.error('Error al subir el archivo JSON a VTEX');
-        }
-      } catch (uploadErr) {
-        logOperations.excel.error('Error inesperado al intentar subir el archivo JSON a VTEX', uploadErr);
-      }
-
-      // Subir el JSON a GCP como log para el usuario
-      try {
-        const { uploadJsonToGCP, moveFileInGCP } = require('./gcpDownloadService');
-        const { Storage } = require('@google-cloud/storage');
-        const bucketName = config.gcp.bucketName;
-        const destFolder = 'Publicaciones_json_vtex';
-        // Prefijo del nombre según tipo de archivo (y hoja para destacados)
-        let filePrefix = 'googleSheet';
-        if (fileType === 'locations') filePrefix = 'locations';
-        else if (fileType === 'sellers') filePrefix = 'sellers';
-        else if (fileType === 'variantes') filePrefix = 'variantes';
-        else if (fileType === 'blacklist') filePrefix = 'blacklistSellers';
-        else if (fileType === 'destacados') filePrefix = sheetName ? `destacados_${slugify(sheetName)}` : 'destacados';
-        // Usar nombre con fecha/hora para evitar sobrescribir
-        const now = new Date();
-        const destFileName = `${filePrefix}_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.json`;
-        await uploadJsonToGCP(bucketName, destFolder, outputPath, destFileName);
-        logOperations.excel.info(`Archivo JSON subido a GCP en Publicaciones_json_vtex/${destFileName}`);
-
-        // Mover el Excel procesado a la carpeta Publicaciones_json_vtex (evita reprocesos)
-        if (this._latestGcpExcelFile) {
-          const srcPath = this._latestGcpExcelFile;
-          const destPath = `Publicaciones_json_vtex/${path.basename(srcPath)}`;
-          await moveFileInGCP(bucketName, srcPath, destPath);
-          logOperations.excel.info(`Archivo Excel procesado movido en GCP de ${srcPath} a ${destPath}`);
-          // Limpiar la referencia para evitar que llamadas posteriores (ej: múltiples hojas destacados) reintenten el movimiento
-          this._latestGcpExcelFile = null;
-
-          // Limpiar la carpeta Archivos_sheets/ en el bucket de GCP
-          try {
-            const storage = new Storage({ keyFilename: path.resolve(__dirname, '../../gcp-service-account.json'), projectId: config.gcp.projectId  });
-            const [files] = await storage.bucket(bucketName).getFiles({ prefix: 'Archivos_sheets/' });
-            await Promise.all(
-              files.map(async file => {
-                if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-                  await file.delete();
-                  logOperations.excel.info(`Archivo Excel eliminado de Archivos_sheets/: ${file.name}`);
-                }
-              })
-            );
-            logOperations.excel.info('Carpeta Archivos_sheets/ limpiada en GCP.');
-          } catch (cleanErr) {
-            logOperations.excel.error('Error al limpiar la carpeta Archivos_sheets/ en GCP', cleanErr);
-          }
-        }
-      } catch (gcpErr) {
-        logOperations.excel.error('Error al subir el archivo JSON o mover el Excel en GCP (Publicaciones_json_vtex)', gcpErr);
-      }
-
-    } catch (error) {
-      logOperations.excel.error('Error guardando datos procesados', error);
-      throw createError.excel('Error al guardar el archivo JSON', { error: error.message });
+      fileName = OUTPUT_FILE_NAMES[fileType] || 'output.json';
     }
+
+    // 2. Ruta local única para no sobreescribir otros procesos
+    const outputDir = path.resolve(__dirname, '../../data/output');
+    await fs.mkdir(outputDir, { recursive: true });
+    const outputPath = path.join(outputDir, fileName);
+
+    // 3. Crear objeto con metadata y guardar
+    const sourceFileName = data?.metadata?.sourceFile || '';
+    const outputData = {
+      metadata: {
+        processedAt: new Date().toLocaleString('sv-SE', { timeZone: 'America/Lima' }).replace(' ', 'T') + ':00',
+        recordCount: data?.metadata?.totalRecords || (Array.isArray(data) ? data.length : 0),
+        sourceFile: sourceFileName,
+        version: '1.0'
+      },
+      data: data
+    };
+
+    await fs.writeFile(outputPath, JSON.stringify(outputData, null, 2), 'utf8');
+    logOperations.excel.info(`Datos guardados en: ${outputPath}`);
+
+    // 4. Subir a VTEX
+    try {
+      const { uploadFileToVtexPortal } = require('./uploadOutputToPortalModule');
+      logOperations.excel.info(`Subiendo a VTEX como '${fileName}' (tipo: ${fileType})`);
+      const uploadResult = await uploadFileToVtexPortal(outputPath, fileName);
+      if (uploadResult) {
+        logOperations.excel.info('Archivo JSON subido exitosamente a VTEX');
+      } else {
+        logOperations.excel.error('Error al subir el archivo JSON a VTEX');
+      }
+    } catch (uploadErr) {
+      logOperations.excel.error('Error inesperado al intentar subir el archivo JSON a VTEX', uploadErr);
+    }
+
+    // 5. Log en GCP con prefijo correcto para tags
+    try {
+      const { uploadJsonToGCP, moveFileInGCP } = require('./gcpDownloadService');
+      const bucketName = config.gcp.bucketName;
+      const destFolder = 'Publicaciones_json_vtex';
+
+      let filePrefix = 'googleSheet';
+      if (fileType === 'locations') filePrefix = 'locations';
+      else if (fileType === 'sellers') filePrefix = 'sellers';
+      else if (fileType === 'variantes') filePrefix = 'variantes';
+      else if (fileType === 'blacklist') filePrefix = 'blacklistSellers';
+      else if (fileType === 'tags') filePrefix = 'tags'; // <-- Agregado
+      else if (fileType === 'destacados') filePrefix = sheetName ? `destacados_${slugify(sheetName)}` : 'destacados';
+
+      const now = new Date();
+      const destFileName = `${filePrefix}_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.json`;
+      await uploadJsonToGCP(bucketName, destFolder, outputPath, destFileName);
+      logOperations.excel.info(`Archivo JSON subido a GCP en Publicaciones_json_vtex/${destFileName}`);
+
+      if (this._latestGcpExcelFile) {
+        const srcPath = this._latestGcpExcelFile;
+        const destPath = `Publicaciones_json_vtex/${path.basename(srcPath)}`;
+        await moveFileInGCP(bucketName, srcPath, destPath);
+        logOperations.excel.info(`Archivo Excel procesado movido en GCP de ${srcPath} a ${destPath}`);
+        this._latestGcpExcelFile = null;
+      }
+    } catch (gcpErr) {
+      logOperations.excel.error('Error al subir a GCP', gcpErr);
+    }
+
+  } catch (error) {
+    logOperations.excel.error('Error guardando datos procesados', error);
+    throw createError.excel('Error al guardar el archivo JSON', { error: error.message });
   }
+}
 }
 
 module.exports = new ExcelService();

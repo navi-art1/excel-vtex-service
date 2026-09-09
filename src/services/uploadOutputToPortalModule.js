@@ -65,6 +65,12 @@ async function uploadFileToVtexPortal(filePath, fileName) {
     } else if (upperSourceFileForBlacklist.startsWith('BLACKLIST_PRD_')) {
       endpoint = '/portal/pvt/sites/promart/files';
       account = 'promart';
+    } else if (upperSourceFile.startsWith('TAGS_RD_')) {
+      endpoint = '/portal/pvt/sites/promartrd/files';
+      account = 'promartrd';
+    } else if (upperSourceFile.startsWith('TAGS_PRD_')) {
+      endpoint = '/portal/pvt/sites/promart/files';
+      account = 'promart';
     } else {
       endpoint = process.env.VTEX_ENDPOINT || '/portal/pvt/sites/promartrd/files';
       account = process.env.VTEX_ACCOUNT || 'promartrd';
